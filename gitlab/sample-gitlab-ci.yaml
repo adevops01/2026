@@ -1,0 +1,102 @@
+workflow:
+    name: Solar System NodeJS Pipeline
+    rules:
+        - if: $CI_COMMIT_BRANCH == 'main' || $CI_COMMIT_BRANCH =~ /^feature/
+          when: always
+        - if: $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^feature/ && $CI_PIPELINE_SOURCE == 'merge_request_event'
+          when: always
+
+#variables:
+#  MONGO_URI: 'mongodb+srv://supercluster.d83jj.mongodb.net/superData'
+#  MONGO_USERNAME: superuser
+#  MONGO_PASSWORD: $M_DB_PASSWORD
+
+stages:
+  - test
+  - containerization
+unit_testing:
+  stage: test
+  image: node:17-alpine3.14
+  services:
+  - name: siddharth67/mongo-db:non-prod
+    alias: mongo
+    pull_policy: [always]
+  variables:
+    MONGO_URI: 'mongodb://mongo:27017/superData'
+    MONGO_USERNAME: non-prod-user
+    MONGO_PASSWORD: non-prod-password
+  before_script:
+    - npm install
+  script:
+    - npm test
+  cache:
+    policy: pull-push
+    key:
+        files:
+          - package-lock.json
+        prefix: kk-lab-node-modules
+    paths:
+      - node_modules
+  artifacts:
+    name: Mocha-Test-Result
+    when: on_success
+    paths:
+      - test-results.xml
+    expire_in: 3 days
+
+code_coverage:
+  stage: test
+  image: node:17-alpine3.14
+  services:
+  - name: siddharth67/mongo-db:non-prod
+    alias: mongo
+    pull_policy: [always]
+  variables:
+    MONGO_URI: 'mongodb://mongo:27017/superData'
+    MONGO_USERNAME: non-prod-user
+    MONGO_PASSWORD: non-prod-password
+  before_script:
+    - npm install
+  cache:
+    policy: pull
+    key:
+        files:
+          - package-lock.json
+        prefix: kk-lab-node-modules
+    paths:
+      - node_modules
+  script: |
+    npm run coverage
+  artifacts:
+    name: Lab3-Code-Coverage-Result
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+  allow_failure: true
+
+docker_build:
+  stage: containerization
+  image: docker:24.0.5
+  dependencies: []
+  services:
+  - docker:24.0.5-dind
+  scripts:
+  - chmod +x ./scripts/docker_build.sh
+  - ./scripts/docker_build.sh
+  artifacts:
+    paths:
+    - image
+
+publish_gitlab_container_registry:  
+  stage: containerization
+  needs:
+    - docker_build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  script:
+    -  docker load -i image/solar-system-image-$CI_PIPELINE_ID.tar
+    -  docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    -  docker tag solar-system:$CI_PIPELINE_ID $CI_REGISTRY_IMAGE/solar-system:$CI_PIPELINE_ID 
+    -  docker push $CI_REGISTRY_IMAGE/solar-system:$CI_PIPELINE_ID
